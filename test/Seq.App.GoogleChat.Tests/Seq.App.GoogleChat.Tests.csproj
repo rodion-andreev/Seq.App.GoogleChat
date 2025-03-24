@@ -1,0 +1,31 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <IsPackable>false</IsPackable>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Compile Remove="EventFormattingTests.cs" />
+    <Compile Remove="PropertyFormatterTests.cs" />
+    <Compile Remove="GoogleChatAppTests.cs" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <None Include="EventFormattingTests.cs" />
+    <None Include="PropertyFormatterTests.cs" />
+    <None Include="GoogleChatAppTests.cs" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.NET.Test.Sdk" Version="16.1.0" />
+    <PackageReference Include="NSubstitute" Version="4.2.2" />
+    <PackageReference Include="xunit" Version="2.4.1" />
+    <PackageReference Include="xunit.runner.visualstudio" Version="2.4.3" />
+  </ItemGroup>
+  
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\Seq.App.GoogleChat\Seq.App.GoogleChat.csproj" />
+  </ItemGroup>
+
+</Project>
