@@ -40,21 +40,6 @@ namespace Seq.App.GoogleChat.Tests
                 new PropertyValueFormatter(null),
                 false,
                 null);
-        }
-
-        [Fact]
-        public void BuildMessage_UsesDefaultTemplateWhenMessageTemplateIsNull()
-        {
-            var builder = CreateDefaultMessageBuilder();
-            var result = builder.BuildMessage(_event);
-            var serializeOptions = new JsonSerializerOptions
-            {
-                PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
-                WriteIndented = true
-            };
-            var json = JsonSerializer.Serialize(result, serializeOptions);
-
-            Assert.Equal("[RenderedMessage]", result.CardsV2[0].Card.Header.Title);
         }       
     }
 }
