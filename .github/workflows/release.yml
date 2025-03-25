@@ -1,0 +1,53 @@
+name: Release to NuGet
+
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v3
+      with:
+        fetch-depth: 0
+
+    - name: Setup .NET
+      uses: actions/setup-dotnet@v3
+      with:
+        dotnet-version: '8.x'
+
+    - name: Setup Node
+      uses: actions/setup-node@v3
+      with:
+        node-version: '20'
+
+    - name: Install standard-version
+      run: npm install -g standard-version
+
+    - name: Bump version & update changelog
+      run: |
+        git config user.name "github-actions"
+        git config user.email "actions@github.com"
+        standard-version
+        git push origin main
+        git push origin --tags
+
+    - name: Build & Pack
+      run: |
+        dotnet restore
+        dotnet build --configuration Release --no-restore
+        version=$(node -p "require('./package.json').version")
+        dotnet pack --configuration Release --no-build -p:PackageVersion=$version
+
+    - name: Publish to NuGet
+      run: dotnet nuget push bin/Release/*.nupkg --api-key ${{ secrets.NUGET_API_KEY }} --source https://api.nuget.org/v3/index.json
+
+    - name: Create GitHub Release
+      uses: softprops/action-gh-release@v1
+      with:
+        tag_name: v${{ steps.version.outputs.version }}
+        name: v${{ steps.version.outputs.version }}
+        body_path: ./CHANGELOG.md
