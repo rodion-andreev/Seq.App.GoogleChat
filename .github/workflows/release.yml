@@ -20,46 +20,53 @@ jobs:
       - name: Setup .NET
         uses: actions/setup-dotnet@v3
         with:
-          dotnet-version: '8.x'
+          dotnet-version: '8.x'  # Ensure compatibility with .NET 8
 
       - name: Setup Node
         uses: actions/setup-node@v3
         with:
-          node-version: '20'
+          node-version: '20'  # Ensure compatibility with the latest Node.js version
 
       - name: Install standard-version
-        run: npm install -g standard-version
+        run: npm install -g standard-version  # Confirm global installation of standard-version
 
       - name: Bump version & update changelog
-        id: bump_version
+        id: version
         run: |
           git config user.name "github-actions"
           git config user.email "actions@github.com"
           
-          # Bump version via standard-version
+          # Bump version with standard-version
           standard-version
           
-          # Extract version from updated package.json
+          # Capture the newly bumped version from package.json
           new_version=$(node -p "require('./package.json').version")
-          echo "version=$new_version" >> "$GITHUB_OUTPUT"
+          echo "version=$new_version" >> $GITHUB_OUTPUT
           
-          # Push the new version commit & tags
+          # Push the version bump commit and the new tags
           git push origin main
           git push origin --tags
 
       - name: Build & Pack
         run: |
-          dotnet restore
-          dotnet build --configuration Release --no-restore
-          dotnet pack --configuration Release --no-build \
-            -p:PackageVersion=${{ steps.bump_version.outputs.version }}
+          # Restore and build your .csproj (replace path if needed)
+          dotnet restore ./Seq.App.GoogleChat/Seq.App.GoogleChat.csproj  # Ensure correct project path
+          dotnet build ./Seq.App.GoogleChat/Seq.App.GoogleChat.csproj --configuration Release --no-restore
+          
+          # Use the same version that we just bumped
+          dotnet pack ./Seq.App.GoogleChat/Seq.App.GoogleChat.csproj \
+            --configuration Release \
+            --no-build \
+            -p:PackageVersion=${{ steps.version.outputs.version }}
 
       - name: Publish to NuGet
-        run: dotnet nuget push bin/Release/*.nupkg --api-key ${{ secrets.NUGET_API_KEY }} --source https://api.nuget.org
+        run: dotnet nuget push ./Seq.App.GoogleChat/bin/Release/*.nupkg \
+          --api-key ${{ secrets.NUGET_API_KEY }} \
+          --source https://api.nuget.org/v3/index.json  # Ensure correct API key and source URL
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v1
         with:
-          tag_name: v${{ steps.bump_version.outputs.version }}
-          name: v${{ steps.bump_version.outputs.version }}
-          body_path: ./CHANGELOG.md
+          tag_name: v${{ steps.version.outputs.version }}
+          name: v${{ steps.version.outputs.version }}
+          body_path: ./CHANGELOG.md  # Ensure correct changelog path
