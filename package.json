@@ -1,6 +1,6 @@
 {
   "name": "Seq.App.GoogleChat",
-  "version": "1.0.1",
+  "version": "1.0.0",
   "scripts": {
     "release": "standard-version"
   },
