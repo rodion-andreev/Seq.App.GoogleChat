@@ -1,0 +1,55 @@
+name: Release to NuGet
+
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  tag-and-publish:
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v3
+      with:
+        fetch-depth: 0 # Required to access full git history for tags
+
+    - name: Setup .NET
+      uses: actions/setup-dotnet@v3
+      with:
+        dotnet-version: '8.x'
+
+    - name: Determine Next Version
+      id: versioning
+      run: |
+        # Example: simple auto-increment versioning using git tags
+        latest_tag=$(git describe --tags `git rev-list --tags --max-count=1`)
+        echo "Latest tag: $latest_tag"
+
+        if [[ $latest_tag =~ ^v([0-9]+)\.([0-9]+)\.([0-9]+)$ ]]; then
+          major=${BASH_REMATCH[1]}
+          minor=${BASH_REMATCH[2]}
+          patch=${BASH_REMATCH[3]}
+          new_version="v$major.$minor.$((patch + 1))"
+        else
+          new_version="v1.0.0"
+        fi
+
+        echo "New version: $new_version"
+        echo "new_version=$new_version" >> $GITHUB_OUTPUT
+
+    - name: Create Git Tag
+      run: |
+        git config user.name "github-actions"
+        git config user.email "actions@github.com"
+        git tag ${{ steps.versioning.outputs.new_version }}
+        git push origin ${{ steps.versioning.outputs.new_version }}
+
+    - name: Build & Pack
+      run: |
+        dotnet restore
+        dotnet build --configuration Release --no-restore
+        dotnet pack --configuration Release --no-build -p:PackageVersion=${{ steps.versioning.outputs.new_version }}
+
+    - name: Publish to NuGet
+      run: dotnet nuget push bin/Release/*.nupkg --api-key ${{ secrets.NUGET_API_KEY }} --source https://api.nuget.org/v3/index.json
