@@ -5,49 +5,63 @@ on:
     branches:
       - main
 
+permissions:
+  contents: write
+
 jobs:
   release:
     runs-on: ubuntu-latest
 
     steps:
-    - uses: actions/checkout@v3
-      with:
-        fetch-depth: 0
+      - uses: actions/checkout@v3
+        with:
+          fetch-depth: 0
 
-    - name: Setup .NET
-      uses: actions/setup-dotnet@v3
-      with:
-        dotnet-version: '8.x'
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v3
+        with:
+          dotnet-version: '8.x'
 
-    - name: Setup Node
-      uses: actions/setup-node@v3
-      with:
-        node-version: '20'
+      - name: Setup Node
+        uses: actions/setup-node@v3
+        with:
+          node-version: '20'
 
-    - name: Install standard-version
-      run: npm install -g standard-version
+      - name: Install standard-version
+        run: npm install -g standard-version
 
-    - name: Bump version & update changelog
-      run: |
-        git config user.name "github-actions"
-        git config user.email "actions@github.com"
-        standard-version
-        git push origin main
-        git push origin --tags
+      - name: Bump version & update changelog
+        id: bump_version
+        run: |
+          git config user.name "github-actions"
+          git config user.email "actions@github.com"
+          
+          # Bump version via standard-version
+          standard-version
+          
+          # Extract version from updated package.json
+          new_version=$(node -p "require('./package.json').version")
+          echo "version=$new_version" >> "$GITHUB_OUTPUT"
+          
+          # Push the new version commit & tags
+          git push origin main
+          git push origin --tags
 
-    - name: Build & Pack
-      run: |
-        dotnet restore
-        dotnet build --configuration Release --no-restore
-        version=$(node -p "require('./package.json').version")
-        dotnet pack --configuration Release --no-build -p:PackageVersion=$version
+      - name: Build & Pack
+        run: |
+          dotnet restore
+          dotnet build --configuration Release --no-restore
+          dotnet pack --configuration Release --no-build \
+            -p:PackageVersion=${{ steps.bump_version.outputs.version }}
 
-    - name: Publish to NuGet
-      run: dotnet nuget push bin/Release/*.nupkg --api-key ${{ secrets.NUGET_API_KEY }} --source https://api.nuget.org/v3/index.json
+      - name: Publish to NuGet
+        run: dotnet nuget push bin/Release/*.nupkg \
+          --api-key ${{ secrets.NUGET_API_KEY }} \
+          --source https://api.nuget.org/v3/index.json
 
-    - name: Create GitHub Release
-      uses: softprops/action-gh-release@v1
-      with:
-        tag_name: v${{ steps.version.outputs.version }}
-        name: v${{ steps.version.outputs.version }}
-        body_path: ./CHANGELOG.md
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v1
+        with:
+          tag_name: v${{ steps.bump_version.outputs.version }}
+          name: v${{ steps.bump_version.outputs.version }}
+          body_path: ./CHANGELOG.md
