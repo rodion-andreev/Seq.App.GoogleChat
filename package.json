@@ -1,0 +1,12 @@
+{
+  "name": "Seq.App.GoogleChat",
+  "version": "1.0.0",
+  "scripts": {
+    "release": "standard-version"
+  },
+  "standard-version": {
+    "skip": {
+      "tag": true
+    }
+  }
+}
