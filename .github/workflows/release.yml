@@ -20,15 +20,15 @@ jobs:
       - name: Setup .NET
         uses: actions/setup-dotnet@v3
         with:
-          dotnet-version: '8.x'  # Ensure compatibility with .NET 8
+          dotnet-version: '8.x'
 
       - name: Setup Node
         uses: actions/setup-node@v3
         with:
-          node-version: '20'  # Ensure compatibility with the latest Node.js version
+          node-version: '20'
 
       - name: Install standard-version
-        run: npm install -g standard-version  # Confirm global installation of standard-version
+        run: npm install -g standard-version
 
       - name: Bump version & update changelog
         id: version
@@ -50,23 +50,23 @@ jobs:
       - name: Build & Pack
         run: |
           # Restore and build your .csproj (replace path if needed)
-          dotnet restore ./Seq.App.GoogleChat/Seq.App.GoogleChat.csproj  # Ensure correct project path
-          dotnet build ./Seq.App.GoogleChat/Seq.App.GoogleChat.csproj --configuration Release --no-restore
+          dotnet restore src/Seq.App.GoogleChat/Seq.App.GoogleChat.csproj
+          dotnet build src/Seq.App.GoogleChat/Seq.App.GoogleChat.csproj --configuration Release --no-restore
           
           # Use the same version that we just bumped
-          dotnet pack ./Seq.App.GoogleChat/Seq.App.GoogleChat.csproj \
+          dotnet pack src/Seq.App.GoogleChat/Seq.App.GoogleChat.csproj \
             --configuration Release \
             --no-build \
             -p:PackageVersion=${{ steps.version.outputs.version }}
 
       - name: Publish to NuGet
-        run: dotnet nuget push ./Seq.App.GoogleChat/bin/Release/*.nupkg \
+        run: dotnet nuget push src/Seq.App.GoogleChat/bin/Release/*.nupkg \
           --api-key ${{ secrets.NUGET_API_KEY }} \
-          --source https://api.nuget.org/v3/index.json  # Ensure correct API key and source URL
+          --source https://api.nuget.org/v3/index.json
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v1
         with:
           tag_name: v${{ steps.version.outputs.version }}
           name: v${{ steps.version.outputs.version }}
-          body_path: ./CHANGELOG.md  # Ensure correct changelog path
+          body_path: ./CHANGELOG.md
