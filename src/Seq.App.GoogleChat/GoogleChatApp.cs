@@ -51,7 +51,7 @@ namespace Seq.App.GoogleChat
         public string IncludedProperties { get; set; }
 
         private EventTypeSuppressions _suppressions;
-        private IGoogleChatApi _GoogleChatApi;
+        private IGoogleChatApi _googleChatApi;
 
         // Used reflectively by the app host.
         // ReSharper disable once UnusedMember.Global
@@ -61,32 +61,29 @@ namespace Seq.App.GoogleChat
 
         internal GoogleChatApp(IGoogleChatApi GoogleChatApi)
         {
-            _GoogleChatApi = GoogleChatApi;
+            _googleChatApi = GoogleChatApi;
         }
 
         protected override void OnAttached()
         {
-            if (_GoogleChatApi == null)
-            {
-                _GoogleChatApi = new GoogleChatApi(ProxyServer);
-            }
+            _googleChatApi ??= new GoogleChatApi(ProxyServer);
 
             var propertyValueFormatter = new PropertyValueFormatter(MaxPropertyLength);
 
-            var includedProperties = string.IsNullOrWhiteSpace(IncludedProperties) ? Array.Empty<string>() : IncludedProperties.Split(',').Select(x => x.Trim());
+            var includedProperties = string.IsNullOrWhiteSpace(IncludedProperties) ? [] : IncludedProperties.Split(',').Select(x => x.Trim());
 
             _defaultMessageBuilder = new DefaultMessageBuilder(Host, App, propertyValueFormatter, ExcludePropertyInformation, includedProperties);
         }
 
         public async Task OnAsync(Event<LogEventData> evt)
         {
-            _suppressions = _suppressions ?? new EventTypeSuppressions(SuppressionMinutes);
+            _suppressions ??= new EventTypeSuppressions(SuppressionMinutes);
             if (_suppressions.ShouldSuppressAt(evt.EventType, DateTime.UtcNow))
                 return;
 
             var message = _defaultMessageBuilder.BuildMessage(evt);
 
-            await _GoogleChatApi.SendMessageAsync(WebhookUrl, message);
+            await _googleChatApi.SendMessageAsync(WebhookUrl, message);
         }
     }
 }

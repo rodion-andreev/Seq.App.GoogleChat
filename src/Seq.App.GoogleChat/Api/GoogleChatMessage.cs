@@ -2,17 +2,14 @@
 
 namespace Seq.App.GoogleChat.Api
 {
-    public class GoogleChatMessage
+    public class GoogleChatMessage(Card card)
     {
-        public CardV2[] CardsV2 { get; set; }
-
-        public GoogleChatMessage(Card card) => CardsV2 = [new CardV2(card)];
+        public CardV2[] CardsV2 { get; set; } = [new CardV2(card)];
     }
 
-    public class CardV2
+    public class CardV2(Card card)
     {
-        public CardV2(Card card) => Card = card;
-        public Card Card { get; set; }
+        public Card Card { get; set; } = card;
     }
 
     public class Card

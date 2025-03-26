@@ -4,8 +4,6 @@ using Seq.Apps;
 using Seq.Apps.LogEvents;
 using System;
 using System.Collections.Generic;
-using System.Text.Json;
-using Xunit;
 
 namespace Seq.App.GoogleChat.Tests
 {
@@ -32,7 +30,7 @@ namespace Seq.App.GoogleChat.Tests
             });
         }
 
-        private DefaultMessageBuilder CreateDefaultMessageBuilder(string messageTemplate = null, IEnumerable<string> includedProperties = null)
+        private DefaultMessageBuilder CreateDefaultMessageBuilder()
         {
             return new DefaultMessageBuilder(
                 _host,
