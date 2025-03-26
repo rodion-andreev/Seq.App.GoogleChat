@@ -1,0 +1,70 @@
+name: Release to NuGet
+
+on:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v3
+        with:
+          fetch-depth: 0
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v3
+        with:
+          dotnet-version: '8.x'
+
+      - name: Setup Node
+        uses: actions/setup-node@v3
+        with:
+          node-version: '20'
+
+      - name: Install standard-version
+        run: npm install -g standard-version
+
+      - name: Bump version & update changelog
+        id: version
+        run: |
+          git config user.name "github-actions"
+          git config user.email "actions@github.com"
+          
+          # Bump version with standard-version
+          standard-version
+          
+          # Capture the newly bumped version from package.json
+          new_version=$(node -p "require('./package.json').version")
+          echo "version=$new_version" >> $GITHUB_OUTPUT
+          
+          # Push the version bump commit and the new tags
+          git push origin main
+          git push origin --tags
+
+      - name: Build & Pack
+        run: |
+          # Restore and build your .csproj (replace path if needed)
+          dotnet restore src/Seq.App.GoogleChat/Seq.App.GoogleChat.csproj
+          dotnet build src/Seq.App.GoogleChat/Seq.App.GoogleChat.csproj --configuration Release --no-restore
+          
+          # Use the same version that we just bumped
+          dotnet pack src/Seq.App.GoogleChat/Seq.App.GoogleChat.csproj \
+            --configuration Release \
+            --no-build \
+            -p:PackageVersion=${{ steps.version.outputs.version }}
+
+      - name: Publish to NuGet
+        run: dotnet nuget push src/Seq.App.GoogleChat/bin/Release/*.nupkg --api-key ${{ secrets.NUGET_API_KEY }} --source https://api.nuget.org/v3/index.json --skip-duplicate
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v1
+        with:
+          tag_name: v${{ steps.version.outputs.version }}
+          name: v${{ steps.version.outputs.version }}
+          body_path: ./CHANGELOG.md
