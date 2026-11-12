@@ -1,6 +1,7 @@
 ﻿using System;
-using System.Collections.Generic;
+using System.Globalization;
 using System.Text.Json;
+using Seq.App.GoogleChat.Api;
 
 namespace Seq.App.GoogleChat.Formatting
 {
@@ -10,35 +11,35 @@ namespace Seq.App.GoogleChat.Formatting
 
         public PropertyValueFormatter(int? maxPropertyLength)
         {
-            _maxPropertyLength = maxPropertyLength;
+            _maxPropertyLength = maxPropertyLength is > 0 ? maxPropertyLength : null;
         }
 
+        /// <summary>
+        /// Scalars as text, structures and sequences as JSON, truncated to the configured length.
+        /// </summary>
         public string ConvertPropertyValueToString(object propertyValue)
         {
-            if (propertyValue == null)
-                return string.Empty;
-
-            string result;
-            Type t = propertyValue.GetType();
-            bool isDict = t.IsGenericType && t.GetGenericTypeDefinition() == typeof(Dictionary<,>);
-            if (isDict)
+            var result = propertyValue switch
             {
-                result = JsonSerializer.Serialize(propertyValue);
-            }
-            else
-            {
-                result = propertyValue.ToString();
-            }
+                null => "null",
+                string s => s,
+                IFormattable f => f.ToString(null, CultureInfo.InvariantCulture),
+                _ => ToJson(propertyValue)
+            };
 
-            if (_maxPropertyLength.HasValue)
-            {
-                if (result.Length > _maxPropertyLength)
-                {
-                    result = result.Substring(0, _maxPropertyLength.Value) + "...";
-                }
-            }
+            return _maxPropertyLength.HasValue ? GoogleChatSyntax.Truncate(result, _maxPropertyLength.Value) : result;
+        }
 
-            return result;
+        private static string ToJson(object value)
+        {
+            try
+            {
+                return JsonSerializer.Serialize(value, GoogleChatApi.SerializerOptions);
+            }
+            catch (Exception)
+            {
+                return value.ToString();
+            }
         }
     }
 }

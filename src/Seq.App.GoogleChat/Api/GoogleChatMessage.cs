@@ -30,31 +30,27 @@ namespace Seq.App.GoogleChat.Api
     {
         public string Header { get; set; }
 
-        public bool Collapsible = true;
+        public bool? Collapsible { get; set; }
 
-        public int UncollapsibleWidgetsCount = 1;
+        public int? UncollapsibleWidgetsCount { get; set; }
 
-        public List<Widget> Widgets { get; set; }
+        public List<Widget> Widgets { get; set; } = [];
     }
 
     public class Widget
     {
-        public TextParagraph TextParagraph { get; set; }
-
-        public Widget(string text)
-        {
-            TextParagraph = new TextParagraph { Text = text };
-        }
-
-        public Widget(string text, int maxLines)
+        public Widget(string text, int? maxLines = null)
         {
             TextParagraph = new TextParagraph { Text = text, MaxLines = maxLines };
         }
+
+        public TextParagraph TextParagraph { get; set; }
     }
 
     public class TextParagraph
     {
         public string Text { get; set; }
-        public int MaxLines { get; set; } = 2;
+
+        public int? MaxLines { get; set; }
     }
 }

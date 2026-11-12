@@ -2,129 +2,198 @@
 using System.Net;
 using System.Net.Http;
 using System.Net.Http.Headers;
-using System.Net.Http.Json;
+using System.Text;
+using System.Text.Encodings.Web;
 using System.Text.Json;
+using System.Text.Json.Serialization;
 using System.Threading;
 using System.Threading.Tasks;
 
 namespace Seq.App.GoogleChat.Api
 {
     /// <summary>
-    /// Provides methods to interact with the Google Chat API.
+    /// Posts card messages to a Google Chat incoming webhook.
     /// </summary>
-    public class GoogleChatApi : IGoogleChatApi, IDisposable
+    /// <remarks>
+    /// Google Chat accepts one request per second per space, shared by every webhook in it, so posts are
+    /// spaced at least <see cref="MinInterval"/> apart and a 429 or 5xx answer is retried with backoff.
+    /// Nothing this class throws contains the webhook URL: its query string carries the space's key and token.
+    /// </remarks>
+    public sealed class GoogleChatApi : IGoogleChatApi, IDisposable
     {
-        // Singleton instance of JsonSerializerOptions
-        private static readonly JsonSerializerOptions _jsonSerializerOptions = new()
+        internal const int MaxAttempts = 4;
+        internal static readonly TimeSpan MinInterval = TimeSpan.FromMilliseconds(1100);
+        internal static readonly TimeSpan MaxRetryDelay = TimeSpan.FromSeconds(30);
+        internal static readonly TimeSpan RequestTimeout = TimeSpan.FromSeconds(15);
+        private const int MaxResponseBodyInError = 500;
+
+        // Relaxed escaping keeps non-ASCII text (Cyrillic, etc.) as UTF-8 instead of \uXXXX, which matters
+        // for the 32,000-byte message limit; the payload is never embedded in HTML, so it is safe here.
+        internal static readonly JsonSerializerOptions SerializerOptions = new()
         {
             PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
-            WriteIndented = true
+            DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull,
+            Encoder = JavaScriptEncoder.UnsafeRelaxedJsonEscaping
         };
 
-        private static readonly MediaTypeHeaderValue _mediaTypeHeaderValue = new("application/json");
-
         private readonly HttpClient _httpClient;
-        private bool _disposed;
-        private readonly bool _shouldDisposeHttpClient;
+        private readonly bool _ownsHttpClient;
+        private readonly Func<TimeSpan, Task> _delay;
+        private readonly TimeProvider _timeProvider;
+        private readonly SemaphoreSlim _gate = new(1, 1);
+        private DateTimeOffset _lastPostAt = DateTimeOffset.MinValue;
 
-        /// <summary>
-        /// Initializes a new instance of the <see cref="GoogleChatApi"/> class,
-        /// injecting an existing <see cref="HttpClient"/>. This can help with testing
-        /// and advanced scenarios.
-        /// </summary>
-        /// <param name="httpClient">The <see cref="HttpClient"/> to use.</param>
-        /// <exception cref="ArgumentNullException"></exception>
+        /// <param name="proxyServer">Proxy address, or null/empty to connect directly.</param>
+        public GoogleChatApi(string proxyServer)
+            : this(CreateHttpClient(proxyServer), ownsHttpClient: true, delay: null, timeProvider: null)
+        {
+        }
+
+        /// <param name="httpClient">A client owned by the caller; it is not disposed with this instance.</param>
         public GoogleChatApi(HttpClient httpClient)
+            : this(httpClient, ownsHttpClient: false, delay: null, timeProvider: null)
+        {
+        }
+
+        internal GoogleChatApi(HttpClient httpClient, bool ownsHttpClient, Func<TimeSpan, Task> delay, TimeProvider timeProvider)
         {
             _httpClient = httpClient ?? throw new ArgumentNullException(nameof(httpClient));
-            _shouldDisposeHttpClient = false; // Caller owns HttpClient
+            _ownsHttpClient = ownsHttpClient;
+            _delay = delay ?? (d => Task.Delay(d));
+            _timeProvider = timeProvider ?? TimeProvider.System;
         }
 
-        /// <summary>
-        /// Initializes a new instance of the <see cref="GoogleChatApi"/> class
-        /// using an optional proxy server.
-        /// </summary>
-        /// <param name="proxyServer">The proxy server address, or null/empty if not needed.</param>
-        public GoogleChatApi(string proxyServer)
-        {
-            _httpClient = CreateHttpClient(proxyServer);
-            _shouldDisposeHttpClient = true; // We created it, so we are responsible for disposing
-        }
-
-        /// <summary>
-        /// Sends a message to the specified Google Chat webhook URL.
-        /// </summary>
-        /// <param name="webhookUrl">The webhook URL.</param>
-        /// <param name="message">The message to send.</param>
-        /// <returns>A task that represents the asynchronous operation.</returns>
-        /// <exception cref="ArgumentException">Thrown if <paramref name="webhookUrl"/> is null or empty.</exception>
-        /// <exception cref="ArgumentNullException">Thrown if <paramref name="message"/> is null.</exception>
-        /// <exception cref="HttpRequestException">Thrown when the request fails.</exception>
         public async Task SendMessageAsync(string webhookUrl, GoogleChatMessage message)
         {
-            ArgumentException.ThrowIfNullOrWhiteSpace(webhookUrl, nameof(webhookUrl));
-            ArgumentNullException.ThrowIfNull(message, nameof(message));
+            ArgumentException.ThrowIfNullOrWhiteSpace(webhookUrl);
+            ArgumentNullException.ThrowIfNull(message);
 
-            var content = JsonContent.Create(message, _mediaTypeHeaderValue, _jsonSerializerOptions);
-            var response = await _httpClient.PostAsync(webhookUrl, content);
+            var payload = Serialize(message);
 
-            if (!response.IsSuccessStatusCode)
+            await _gate.WaitAsync();
+            try
             {
-                var responseBody = await response.Content.ReadAsStringAsync();
-                throw new HttpRequestException(
-                    $"Failed to send message to Google Chat. " +
-                    $"StatusCode: {response.StatusCode}, ReasonPhrase: {response.ReasonPhrase}, " +
-                    $"ResponseBody: {responseBody}. " +
-                    $"ContentSent: {JsonSerializer.Serialize(message, _jsonSerializerOptions)}"
-                );
+                for (var attempt = 1; ; attempt++)
+                {
+                    await WaitForSlotAsync();
+
+                    var outcome = await PostOnceAsync(webhookUrl, payload);
+                    if (outcome.Delivered)
+                        return;
+
+                    if (!outcome.Retryable || attempt == MaxAttempts)
+                        throw outcome.ToException(attempt);
+
+                    await _delay(outcome.RetryAfter ?? Backoff(attempt));
+                }
+            }
+            finally
+            {
+                _gate.Release();
             }
         }
+
+        internal static string Serialize(GoogleChatMessage message) =>
+            JsonSerializer.Serialize(message, SerializerOptions);
+
+        private async Task WaitForSlotAsync()
+        {
+            var wait = _lastPostAt + MinInterval - _timeProvider.GetUtcNow();
+            if (wait > TimeSpan.Zero)
+                await _delay(wait);
+        }
+
+        private async Task<PostOutcome> PostOnceAsync(string webhookUrl, string payload)
+        {
+            _lastPostAt = _timeProvider.GetUtcNow();
+            using var content = new StringContent(payload, Encoding.UTF8, "application/json");
+            using var timeout = new CancellationTokenSource(RequestTimeout);
+            try
+            {
+                using var response = await _httpClient.PostAsync(webhookUrl, content, timeout.Token);
+                if (response.IsSuccessStatusCode)
+                    return PostOutcome.Success;
+
+                var body = await response.Content.ReadAsStringAsync();
+                return PostOutcome.Rejected(response.StatusCode, body, RetryAfter(response.Headers.RetryAfter));
+            }
+            catch (OperationCanceledException) when (timeout.IsCancellationRequested)
+            {
+                return PostOutcome.Failed(new TimeoutException($"Google Chat did not answer within {RequestTimeout.TotalSeconds:0} s."));
+            }
+            catch (HttpRequestException ex)
+            {
+                return PostOutcome.Failed(ex);
+            }
+        }
+
+        private TimeSpan? RetryAfter(RetryConditionHeaderValue header)
+        {
+            var delay = header?.Delta ?? (header?.Date - _timeProvider.GetUtcNow());
+            if (delay == null)
+                return null;
+            if (delay < TimeSpan.Zero)
+                return TimeSpan.Zero;
+            return delay > MaxRetryDelay ? MaxRetryDelay : delay;
+        }
+
+        private static TimeSpan Backoff(int attempt) => TimeSpan.FromSeconds(Math.Pow(2, attempt - 1));
 
         private static HttpClient CreateHttpClient(string proxyServer)
         {
-            if (!string.IsNullOrWhiteSpace(proxyServer))
+            if (string.IsNullOrWhiteSpace(proxyServer))
+                return new HttpClient { Timeout = Timeout.InfiniteTimeSpan };
+
+            var handler = new HttpClientHandler
             {
-                var proxy = new WebProxy(proxyServer, false)
-                {
-                    UseDefaultCredentials = true
-                };
-                var httpClientHandler = new HttpClientHandler
-                {
-                    Proxy = proxy,
-                    PreAuthenticate = true,
-                    UseDefaultCredentials = true
-                };
-                return new HttpClient(httpClientHandler);
-            }
-            else
-            {
-                return new HttpClient();
-            }
+                Proxy = new WebProxy(proxyServer, false) { UseDefaultCredentials = true },
+                UseProxy = true,
+                PreAuthenticate = true,
+                UseDefaultCredentials = true
+            };
+            return new HttpClient(handler) { Timeout = Timeout.InfiniteTimeSpan };
         }
 
-        /// <summary>
-        /// Releases the unmanaged resources used by the <see cref="GoogleChatApi"/> and optionally releases the managed resources.
-        /// </summary>
-        /// <param name="disposing">true to release both managed and unmanaged resources; false to release only unmanaged resources.</param>
-        protected virtual void Dispose(bool disposing)
-        {
-            if (!_disposed)
-            {
-                if (disposing && _shouldDisposeHttpClient)
-                {
-                    _httpClient?.Dispose();
-                }
-                _disposed = true;
-            }
-        }
-
-        /// <summary>
-        /// Performs application-defined tasks associated with freeing, releasing, or resetting unmanaged resources.
-        /// </summary>
         public void Dispose()
         {
-            Dispose(disposing: true);
-            GC.SuppressFinalize(this);
+            if (_ownsHttpClient)
+                _httpClient.Dispose();
+            _gate.Dispose();
+        }
+
+        private sealed class PostOutcome
+        {
+            public static readonly PostOutcome Success = new() { Delivered = true };
+
+            public bool Delivered { get; private init; }
+            public bool Retryable { get; private init; }
+            public TimeSpan? RetryAfter { get; private init; }
+            private HttpStatusCode? Status { get; init; }
+            private string Body { get; init; }
+            private Exception Error { get; init; }
+
+            public static PostOutcome Rejected(HttpStatusCode status, string body, TimeSpan? retryAfter) => new()
+            {
+                Status = status,
+                Body = body,
+                RetryAfter = retryAfter,
+                Retryable = status == HttpStatusCode.TooManyRequests || (int)status >= 500
+            };
+
+            public static PostOutcome Failed(Exception error) => new() { Error = error, Retryable = true };
+
+            public Exception ToException(int attempts)
+            {
+                var tries = attempts == 1 ? "1 attempt" : $"{attempts} attempts";
+                if (Error != null)
+                    return new GoogleChatDeliveryException($"Could not reach Google Chat ({tries}): {Error.Message}", null, Error);
+
+                var body = Body ?? "";
+                if (body.Length > MaxResponseBodyInError)
+                    body = body[..MaxResponseBodyInError] + "...";
+                return new GoogleChatDeliveryException(
+                    $"Google Chat rejected the message with {(int)Status} {Status} ({tries}). Response: {body}", Status, null);
+            }
         }
     }
 }

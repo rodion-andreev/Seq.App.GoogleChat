@@ -6,21 +6,15 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <Compile Remove="EventFormattingTests.cs" />
-    <Compile Remove="PropertyFormatterTests.cs" />
-    <Compile Remove="GoogleChatAppTests.cs" />
-  </ItemGroup>
-
-  <ItemGroup>
+    <PackageReference Include="Microsoft.Extensions.TimeProvider.Testing" Version="8.10.0" />
     <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.13.0" />
-    <PackageReference Include="Moq" Version="4.20.72" />
     <PackageReference Include="xunit" Version="2.9.3" />
     <PackageReference Include="xunit.runner.visualstudio" Version="3.0.2">
       <PrivateAssets>all</PrivateAssets>
       <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
     </PackageReference>
   </ItemGroup>
-  
+
   <ItemGroup>
     <ProjectReference Include="..\..\src\Seq.App.GoogleChat\Seq.App.GoogleChat.csproj" />
   </ItemGroup>

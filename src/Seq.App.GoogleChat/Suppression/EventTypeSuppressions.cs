@@ -6,40 +6,27 @@ namespace Seq.App.GoogleChat.Suppression
 {
     class EventTypeSuppressions
     {
-        private readonly Dictionary<uint, DateTime> _suppressions = new Dictionary<uint, DateTime>();
-        private readonly int _suppressionMinutes;
+        private readonly Dictionary<uint, DateTime> _suppressions = new();
+        private readonly TimeSpan _window;
 
         public EventTypeSuppressions(int suppressionMinutes)
         {
-            _suppressionMinutes = suppressionMinutes;
+            _window = TimeSpan.FromMinutes(Math.Max(0, suppressionMinutes));
         }
 
         public bool ShouldSuppressAt(uint eventType, DateTime utcNow)
         {
-            if (_suppressionMinutes == 0)
+            if (_window == TimeSpan.Zero)
                 return false;
 
-            if (!_suppressions.TryGetValue(eventType, out var suppressedSince) ||
-                suppressedSince.AddMinutes(_suppressionMinutes) < utcNow)
-            {
-                // Not suppressed, or suppression expired
+            if (_suppressions.TryGetValue(eventType, out var since) && since + _window >= utcNow)
+                return true;
 
-                // Clean up old entries
-                var expired = _suppressions.FirstOrDefault(kvp => kvp.Value.AddMinutes(_suppressionMinutes) < utcNow);
-                while (expired.Value != default)
-                {
-                    _suppressions.Remove(expired.Key);
-                    expired = _suppressions.FirstOrDefault(kvp => kvp.Value.AddMinutes(_suppressionMinutes) < utcNow);
-                }
+            foreach (var expired in _suppressions.Where(kvp => kvp.Value + _window < utcNow).Select(kvp => kvp.Key).ToList())
+                _suppressions.Remove(expired);
 
-                // Start suppression again
-                suppressedSince = utcNow;
-                _suppressions[eventType] = suppressedSince;
-                return false;
-            }
-
-            // Suppressed
-            return true;
+            _suppressions[eventType] = utcNow;
+            return false;
         }
     }
 }

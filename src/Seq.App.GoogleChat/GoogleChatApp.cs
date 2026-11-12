@@ -10,48 +10,49 @@ using System.Threading.Tasks;
 
 namespace Seq.App.GoogleChat
 {
-    [SeqApp("Google Chat Notifier", Description = "Sends events to a Google chat webhook.")]
-    public class GoogleChatApp : SeqApp, ISubscribeToAsync<LogEventData>
+    [SeqApp("Google Chat Notifier", Description = "Sends events and alert notifications to a Google Chat space through an incoming webhook.")]
+    public sealed class GoogleChatApp : SeqApp, ISubscribeToAsync<LogEventData>, IDisposable
     {
-        private DefaultMessageBuilder _defaultMessageBuilder;
+        private DefaultMessageBuilder _messageBuilder;
+        private EventTypeSuppressions _suppressions;
+        private IGoogleChatApi _googleChatApi;
+        private bool _ownsGoogleChatApi;
 
         [SeqAppSetting(
             DisplayName = "Webhook URL",
-            HelpText = "Add the Incoming WebHooks app to your GoogleChat to get this URL.")]
+            InputType = SettingInputType.Password,
+            HelpText = "The incoming webhook URL of the Google Chat space (space menu > Apps & integrations > Webhooks). It contains the space's key and token: treat it as a secret.")]
         public string WebhookUrl { get; set; }
 
         [SeqAppSetting(
             DisplayName = "Suppression time (minutes)",
             IsOptional = true,
-            HelpText = "Once an event type has been sent to GoogleChat, the time to wait before sending again. The default is zero.")]
-        public int SuppressionMinutes { get; set; } = 0;
+            HelpText = "Once an event type has been sent to Google Chat, the time to wait before sending it again. The default is zero.")]
+        public int SuppressionMinutes { get; set; }
 
         [SeqAppSetting(
             DisplayName = "Exclude optional attachments",
             IsOptional = true,
-            HelpText = "Should event property information and other optional attachments be excluded from the message? The default is to attach all properties.")]
+            HelpText = "Send only the level, message and a link to the event, without the exception and properties. The default is to attach them.")]
         public bool ExcludePropertyInformation { get; set; }
 
         [SeqAppSetting(
             DisplayName = "Proxy Server",
-            HelpText = "Proxy server to be used when making HTTPS requests to the GoogleChat API. Uses default credentials.",
+            HelpText = "Proxy server for the HTTPS requests to Google Chat, e.g. http://proxy:3128. Uses default credentials.",
             IsOptional = true)]
         public string ProxyServer { get; set; }
 
         [SeqAppSetting(
             DisplayName = "Maximum property length",
             IsOptional = true,
-            HelpText = "If a property when converted to a string is longer than this number it will be truncated.")]
-        public int? MaxPropertyLength { get; set; } = null;
+            HelpText = "A property longer than this, once converted to text, is truncated. Values are always capped at 4,000 characters and the whole message at the Google Chat size limit.")]
+        public int? MaxPropertyLength { get; set; }
 
         [SeqAppSetting(
             DisplayName = "Included properties",
             IsOptional = true,
-            HelpText = "Comma separated list of properties to include as attachments. The default is to include all properties.")]
+            HelpText = "Comma-separated list of properties to attach. The default is to attach all properties.")]
         public string IncludedProperties { get; set; }
-
-        private EventTypeSuppressions _suppressions;
-        private IGoogleChatApi _googleChatApi;
 
         // Used reflectively by the app host.
         // ReSharper disable once UnusedMember.Global
@@ -59,31 +60,43 @@ namespace Seq.App.GoogleChat
         {
         }
 
-        internal GoogleChatApp(IGoogleChatApi GoogleChatApi)
+        internal GoogleChatApp(IGoogleChatApi googleChatApi)
         {
-            _googleChatApi = GoogleChatApi;
+            _googleChatApi = googleChatApi;
         }
 
         protected override void OnAttached()
         {
-            _googleChatApi ??= new GoogleChatApi(ProxyServer);
+            if (!Uri.TryCreate(WebhookUrl?.Trim(), UriKind.Absolute, out var webhook) || webhook.Scheme != Uri.UriSchemeHttps)
+                throw new InvalidOperationException("The Webhook URL setting must be an absolute https:// URL.");
+            WebhookUrl = webhook.AbsoluteUri;
 
-            var propertyValueFormatter = new PropertyValueFormatter(MaxPropertyLength);
+            if (_googleChatApi == null)
+            {
+                _googleChatApi = new GoogleChatApi(ProxyServer);
+                _ownsGoogleChatApi = true;
+            }
 
-            var includedProperties = string.IsNullOrWhiteSpace(IncludedProperties) ? [] : IncludedProperties.Split(',').Select(x => x.Trim());
+            var includedProperties = string.IsNullOrWhiteSpace(IncludedProperties)
+                ? []
+                : IncludedProperties.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
 
-            _defaultMessageBuilder = new DefaultMessageBuilder(Host, App, propertyValueFormatter, ExcludePropertyInformation, includedProperties);
+            _messageBuilder = new DefaultMessageBuilder(Host, new PropertyValueFormatter(MaxPropertyLength), ExcludePropertyInformation, includedProperties);
+            _suppressions = new EventTypeSuppressions(SuppressionMinutes);
         }
 
         public async Task OnAsync(Event<LogEventData> evt)
         {
-            _suppressions ??= new EventTypeSuppressions(SuppressionMinutes);
             if (_suppressions.ShouldSuppressAt(evt.EventType, DateTime.UtcNow))
                 return;
 
-            var message = _defaultMessageBuilder.BuildMessage(evt);
+            await _googleChatApi.SendMessageAsync(WebhookUrl, _messageBuilder.BuildMessage(evt));
+        }
 
-            await _googleChatApi.SendMessageAsync(WebhookUrl, message);
+        public void Dispose()
+        {
+            if (_ownsGoogleChatApi && _googleChatApi is IDisposable disposable)
+                disposable.Dispose();
         }
     }
 }
