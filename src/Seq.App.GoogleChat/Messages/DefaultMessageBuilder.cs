@@ -4,95 +4,131 @@ using Seq.Apps;
 using Seq.Apps.LogEvents;
 using System;
 using System.Collections.Generic;
+using System.Globalization;
 using System.Linq;
+using System.Text;
 
 namespace Seq.App.GoogleChat.Messages
 {
     public class DefaultMessageBuilder
     {
-        public const string DefaultIconUrl = "https://datalust.co/images/nuget/seq-apps.png";
+        // Google Chat refuses a message over 32,000 bytes. Text is budgeted in UTF-8 bytes, with headroom for
+        // the JSON around each widget, so a large exception or property set is cut short instead of rejected.
+        internal const int MaxTextBytes = 24_000;
+        internal const int WidgetOverheadBytes = 80;
+        internal const int MaxHeaderChars = 1_000;
+        internal const int MaxWidgetChars = 4_000;
+
+        private const string StackTraceProperty = "StackTrace";
+        private static readonly string[] SpecialProperties = ["Id", "Host"];
 
         private readonly Host _host;
         private readonly PropertyValueFormatter _propertyValueFormatter;
-        private static readonly IEnumerable<string> SpecialProperties = ["Id", "Host"];
-
         private readonly bool _excludeOptionalAttachments;
         private readonly HashSet<string> _includedProperties;
 
-        public DefaultMessageBuilder(Host host, Apps.App app, PropertyValueFormatter propertyValueFormatter, bool excludeOptionalAttachments, IEnumerable<string> includedProperties)
+        public DefaultMessageBuilder(Host host, PropertyValueFormatter propertyValueFormatter, bool excludeOptionalAttachments, IEnumerable<string> includedProperties)
         {
             _host = host ?? throw new ArgumentNullException(nameof(host));
             _propertyValueFormatter = propertyValueFormatter ?? throw new ArgumentNullException(nameof(propertyValueFormatter));
-            _includedProperties = [.. includedProperties ?? throw new ArgumentNullException(nameof(includedProperties))];
+            _includedProperties = [.. includedProperties ?? []];
             _excludeOptionalAttachments = excludeOptionalAttachments;
-
         }
 
         public GoogleChatMessage BuildMessage(Event<LogEventData> evt)
         {
-            var card = new Card()
-            {
+            var data = evt.Data;
+            var renderedMessage = string.IsNullOrWhiteSpace(data.RenderedMessage) ? "(no message)" : data.RenderedMessage;
 
-                Header = new Header { Title = $"<b>{evt.Data.Level}</b>", Subtitle = evt.Data.LocalTimestamp.ToString("f") },
-                Sections = [
-                    new Section {
-                        Header = evt.Data.RenderedMessage,
-                        Widgets =
-                        [
-                            new Widget(GenerateLinkAttachment(evt))
-                        ]
-                    }
-                ]
+            var section = new Section
+            {
+                Header = GoogleChatSyntax.Escape(GoogleChatSyntax.Truncate(renderedMessage, MaxHeaderChars))
             };
+            section.Widgets.Add(new Widget(GoogleChatSyntax.Hyperlink(EventFormatting.LinkToId(_host, evt.Id), "View this event in Seq")));
 
             if (!_excludeOptionalAttachments)
+                AddOptionalWidgets(section, evt, MaxTextBytes - Utf8(section.Header) - Utf8(section.Widgets[0].TextParagraph.Text));
+
+            if (section.Widgets.Count > 1)
             {
-                AddOptionalAttachments(card, evt);
+                section.Collapsible = true;
+                section.UncollapsibleWidgetsCount = 1;
             }
 
+            var card = new Card
+            {
+                Header = new Header { Title = Title(data.Level), Subtitle = Subtitle(data.LocalTimestamp) },
+                Sections = [section]
+            };
             return new GoogleChatMessage(card);
         }
 
-        protected string GenerateLinkAttachment(Event<LogEventData> evt)
+        private void AddOptionalWidgets(Section section, Event<LogEventData> evt, int budget)
         {
-            var viewUrl = EventFormatting.LinkToId(_host, evt.Id);
-            return GoogleChatSyntax.Hyperlink(viewUrl, "View this event in Seq");
-        }
-       
-        protected void AddOptionalAttachments(Card message, Event<LogEventData> evt)
-        {
+            var properties = evt.Data.Properties ?? new Dictionary<string, object>();
+            var candidates = new List<Widget>();
+
             foreach (var key in SpecialProperties)
+                if (properties.TryGetValue(key, out var value))
+                    candidates.Add(PropertyWidget(key, value));
+
+            if (!string.IsNullOrEmpty(evt.Data.Exception))
+                candidates.Add(BlockWidget("Exception", evt.Data.Exception));
+
+            if (properties.TryGetValue(StackTraceProperty, out var st) && st is string stackTrace)
+                candidates.Add(BlockWidget(StackTraceProperty, stackTrace));
+
+            foreach (var property in properties)
             {
-                if (evt.Data.Properties == null || !evt.Data.Properties.ContainsKey(key)) continue;
-
-                var property = evt.Data.Properties[key];
-                message.Sections.First().Widgets.Add(new Widget($"<b>{key}:</b> {property}"));
-
+                if (SpecialProperties.Contains(property.Key) || property.Key == StackTraceProperty) continue;
+                if (_includedProperties.Count != 0 && !_includedProperties.Contains(property.Key)) continue;
+                candidates.Add(PropertyWidget(property.Key, property.Value));
             }
 
-            if (evt.Data.Exception != null)
+            var omitted = 0;
+            foreach (var widget in candidates)
             {
-                message.Sections.First().Widgets.Add(new Widget($"<b>Exception:</b> {GoogleChatSyntax.Preformatted(evt.Data.Exception)}", 1));
-            }
-
-            if (evt.Data.Properties != null && evt.Data.Properties.TryGetValue("StackTrace", out var st) && st is string stackTrace)
-            {
-                message.Sections.First().Widgets.Add(new Widget($"<b>StackTrace:</b> {GoogleChatSyntax.Preformatted(stackTrace)}", 1));
-            }
-
-            if (evt.Data.Properties != null)
-            {
-                foreach (var property in evt.Data.Properties)
+                var size = Utf8(widget.TextParagraph.Text) + WidgetOverheadBytes;
+                if (omitted > 0 || size > budget)
                 {
-                    if (SpecialProperties.Contains(property.Key)) continue;
-                    if (property.Key == "StackTrace") continue;
-                    if (_includedProperties.Count != 0 && !_includedProperties.Contains(property.Key)) continue;
-
-                    var value = _propertyValueFormatter.ConvertPropertyValueToString(property.Value);
-
-                    message.Sections.First().Widgets.Add(new Widget($"<b>{property.Key}:</b> {value}"));
+                    omitted++;
+                    continue;
                 }
+                section.Widgets.Add(widget);
+                budget -= size;
             }
+
+            if (omitted > 0)
+                section.Widgets.Add(new Widget($"<i>{omitted} more item(s) not shown: the message would exceed the Google Chat size limit.</i>"));
         }
+
+        private Widget PropertyWidget(string key, object value)
+        {
+            var text = GoogleChatSyntax.Truncate(_propertyValueFormatter.ConvertPropertyValueToString(value), MaxWidgetChars);
+            return new Widget($"{GoogleChatSyntax.Bold(key + ":")} {GoogleChatSyntax.Multiline(text)}", maxLines: 2);
+        }
+
+        private static Widget BlockWidget(string caption, string text) =>
+            new($"{GoogleChatSyntax.Bold(caption + ":")}<br>{GoogleChatSyntax.Multiline(GoogleChatSyntax.Truncate(text, MaxWidgetChars))}", maxLines: 3);
+
+        private static string Title(LogEventLevel level)
+        {
+            var marker = level switch
+            {
+                LogEventLevel.Fatal or LogEventLevel.Error => "🔴",
+                LogEventLevel.Warning => "🟠",
+                LogEventLevel.Information => "🟢",
+                _ => "⚪"
+            };
+            return $"{marker} {level}";
+        }
+
+        private string Subtitle(DateTimeOffset timestamp)
+        {
+            var time = timestamp.ToString("yyyy-MM-dd HH:mm:ss zzz", CultureInfo.InvariantCulture);
+            return string.IsNullOrWhiteSpace(_host.InstanceName) ? time : $"{_host.InstanceName} · {time}";
+        }
+
+        private static int Utf8(string s) => Encoding.UTF8.GetByteCount(s);
     }
 }
