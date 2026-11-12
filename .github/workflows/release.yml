@@ -7,6 +7,7 @@ on:
 
 permissions:
   contents: write
+  id-token: write # nuget.org Trusted Publishing exchanges the GitHub OIDC token for a one-hour API key
 
 concurrency:
   group: release
@@ -52,9 +53,15 @@ jobs:
             -p:Version=${{ steps.version.outputs.version }} \
             -o artifacts
 
+      - name: NuGet login (Trusted Publishing)
+        id: nuget
+        uses: NuGet/login@v1
+        with:
+          user: ${{ secrets.NUGET_USER }}
+
       # No --skip-duplicate: a version that already exists on nuget.org must fail the release, not pass silently.
       - name: Publish to NuGet
-        run: dotnet nuget push "artifacts/*.nupkg" --api-key ${{ secrets.NUGET_API_KEY }} --source https://api.nuget.org/v3/index.json
+        run: dotnet nuget push "artifacts/*.nupkg" --api-key ${{ steps.nuget.outputs.NUGET_API_KEY }} --source https://api.nuget.org/v3/index.json
 
       - name: Push version commit
         run: git push origin HEAD:main
