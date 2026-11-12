@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file. See [standard-version](https://github.com/conventional-changelog/standard-version) for commit guidelines.
 
+## [1.2.0](https://github.com/rodion-andreev/Seq.App.GoogleChat/compare/v1.0.2...v1.2.0) (2026-11-12)
+
+
+### Features
+
+* reliable delivery to Google Chat ([837af33](https://github.com/rodion-andreev/Seq.App.GoogleChat/commit/837af3372e053a17946a39c82fdb76c08103b1a3))
+
 ### 1.0.2 (2025-03-26)
 
 
