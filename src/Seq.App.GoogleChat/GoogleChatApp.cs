@@ -54,6 +54,12 @@ namespace Seq.App.GoogleChat
             HelpText = "Comma-separated list of properties to attach. The default is to attach all properties.")]
         public string IncludedProperties { get; set; }
 
+        [SeqAppSetting(
+            DisplayName = "Time zone",
+            IsOptional = true,
+            HelpText = "IANA time zone for the dates in messages, e.g. Asia/Bishkek. The default is the time zone of the Seq server.")]
+        public string TimeZone { get; set; }
+
         // Used reflectively by the app host.
         // ReSharper disable once UnusedMember.Global
         public GoogleChatApp()
@@ -81,7 +87,11 @@ namespace Seq.App.GoogleChat
                 ? []
                 : IncludedProperties.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
 
-            _messageBuilder = new DefaultMessageBuilder(Host, new PropertyValueFormatter(MaxPropertyLength), ExcludePropertyInformation, includedProperties);
+            TimeZoneInfo timeZone = null;
+            if (!string.IsNullOrWhiteSpace(TimeZone) && !TimeZoneInfo.TryFindSystemTimeZoneById(TimeZone.Trim(), out timeZone))
+                throw new InvalidOperationException($"The Time zone setting \"{TimeZone}\" is not a known time zone; use an IANA id such as Asia/Bishkek.");
+
+            _messageBuilder = new DefaultMessageBuilder(Host, new PropertyValueFormatter(MaxPropertyLength), ExcludePropertyInformation, includedProperties, timeZone);
             _suppressions = new EventTypeSuppressions(SuppressionMinutes);
         }
 

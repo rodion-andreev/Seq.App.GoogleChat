@@ -29,13 +29,17 @@ namespace Seq.App.GoogleChat.Messages
         private readonly PropertyValueFormatter _propertyValueFormatter;
         private readonly bool _excludeOptionalAttachments;
         private readonly HashSet<string> _includedProperties;
+        private readonly TimeZoneInfo _timeZone;
 
-        public DefaultMessageBuilder(Host host, PropertyValueFormatter propertyValueFormatter, bool excludeOptionalAttachments, IEnumerable<string> includedProperties)
+        /// <param name="timeZone">Zone for the dates in messages; null keeps the offset the Seq server reports.</param>
+        public DefaultMessageBuilder(Host host, PropertyValueFormatter propertyValueFormatter, bool excludeOptionalAttachments,
+            IEnumerable<string> includedProperties, TimeZoneInfo timeZone = null)
         {
             _host = host ?? throw new ArgumentNullException(nameof(host));
             _propertyValueFormatter = propertyValueFormatter ?? throw new ArgumentNullException(nameof(propertyValueFormatter));
             _includedProperties = [.. includedProperties ?? []];
             _excludeOptionalAttachments = excludeOptionalAttachments;
+            _timeZone = timeZone;
         }
 
         public GoogleChatMessage BuildMessage(Event<LogEventData> evt)
@@ -61,6 +65,9 @@ namespace Seq.App.GoogleChat.Messages
         {
             var data = evt.Data;
             var section = NewSection(data.RenderedMessage);
+            // "Alert condition triggered by <title>" only repeats the card title.
+            if (alert.Title != null)
+                section.Header = null;
 
             var links = new List<string>();
             if (alert.ResultsUrl != null) links.Add(GoogleChatSyntax.Hyperlink(alert.ResultsUrl, "View the results"));
@@ -117,12 +124,20 @@ namespace Seq.App.GoogleChat.Messages
 
             var columns = alert.Results[0].Select(c => c?.ToString() ?? "").ToList();
             var rows = alert.Results.Skip(1).ToList();
-            var lines = rows.Take(MaxResultRows).Select(row => string.Join(", ", row.Select((cell, i) =>
-            {
-                var column = i < columns.Count ? columns[i] : $"#{i}";
-                var value = column == "time" && AlertNotification.Time(cell) is { } t ? Local(t, data) : Format(cell);
-                return $"{column}: {value}";
-            }))).ToList();
+
+            // With one time bucket every row carries the same time, which the period line already shows.
+            var timeColumn = columns.IndexOf("time");
+            var skipTime = timeColumn >= 0 && rows.Select(r => timeColumn < r.Count ? r[timeColumn]?.ToString() : null).Distinct().Count() <= 1;
+
+            var lines = rows.Take(MaxResultRows).Select(row => string.Join(", ", row
+                .Select((cell, i) => (cell, i))
+                .Where(c => !(skipTime && c.i == timeColumn))
+                .Select(c =>
+                {
+                    var column = c.i < columns.Count ? columns[c.i] : $"#{c.i}";
+                    var value = column == "time" && AlertNotification.Time(c.cell) is { } t ? Local(t, data) : Format(c.cell);
+                    return $"{column}: {value}";
+                }))).ToList();
 
             if (rows.Count > MaxResultRows)
                 lines.Add($"… {rows.Count - MaxResultRows} more row(s)");
@@ -198,16 +213,19 @@ namespace Seq.App.GoogleChat.Messages
             return $"{marker} {text}";
         }
 
-        // Alert periods come in UTC; show them in the offset the Seq server reports for the notification.
-        private static string Local(DateTimeOffset time, LogEventData data) =>
-            time.ToOffset(data.LocalTimestamp.Offset).ToString(TimeFormat, CultureInfo.InvariantCulture);
+        // Alert periods come in UTC: show them in the configured zone, else in the offset the Seq server reports.
+        private string Local(DateTimeOffset time, LogEventData data) =>
+            InZone(_timeZone == null ? time.ToOffset(data.LocalTimestamp.Offset) : time);
+
+        private string InZone(DateTimeOffset time) =>
+            (_timeZone == null ? time : TimeZoneInfo.ConvertTime(time, _timeZone)).ToString(TimeFormat, CultureInfo.InvariantCulture);
 
         private string Subtitle(DateTimeOffset timestamp)
         {
-            var time = timestamp.ToString(TimeFormat, CultureInfo.InvariantCulture);
+            var time = InZone(timestamp);
             return string.IsNullOrWhiteSpace(_host.InstanceName) ? time : $"{_host.InstanceName} · {time}";
         }
 
-        private static int Utf8(string s) => Encoding.UTF8.GetByteCount(s);
+        private static int Utf8(string s) => s == null ? 0 : Encoding.UTF8.GetByteCount(s);
     }
 }
