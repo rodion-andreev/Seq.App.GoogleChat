@@ -26,6 +26,7 @@ An alert with `having count = 0` does fire when the window holds no events (Seq 
 | Proxy Server | — | e.g. `http://proxy:3128`, with the Seq service account's default credentials. |
 | Maximum property length | — | Truncate each property value. Values are always capped at 4,000 characters. |
 | Included properties | all | Comma-separated property names to attach. |
+| Time zone | Seq server's | IANA id for the dates in messages, e.g. `Asia/Bishkek`. An unknown id stops the instance with an error. |
 
 ## Delivery behaviour
 

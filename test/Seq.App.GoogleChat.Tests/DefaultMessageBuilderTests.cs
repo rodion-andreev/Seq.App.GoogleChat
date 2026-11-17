@@ -178,13 +178,12 @@ namespace Seq.App.GoogleChat.Tests
             var texts = Texts(message).ToList();
 
             Assert.Equal("🔴 Errors by app", card.Header.Title);
-            Assert.Equal("Alert condition triggered by Errors by app", card.Sections[0].Header);
+            Assert.Null(card.Sections[0].Header);
             Assert.Contains("View the results", texts[0]);
             Assert.Contains("https://seq.example.com/#/alerts/alert-23", texts[0]);
             Assert.DoesNotContain(texts, t => t.Contains("View this event in Seq"));
             Assert.Equal("<b>Period:</b> 2026-11-13 15:45:03 +06:00 – 2026-11-13 15:46:03 +06:00", texts[1]);
-            Assert.Equal("<b>Results:</b><br>time: 2026-11-13 15:45:03 +06:00, ApplicationName: Voora.Ai.Portal.Api, count: 3"
-                         + "<br>time: 2026-11-13 15:45:03 +06:00, ApplicationName: Identity.Api, count: 1", texts[2]);
+            Assert.Equal("<b>Results:</b><br>ApplicationName: Voora.Ai.Portal.Api, count: 3<br>ApplicationName: Identity.Api, count: 1", texts[2]);
             Assert.DoesNotContain(texts, t => t.Contains("Alert:") || t.Contains("Source:") || t.Contains("@seqid"));
         }
 
@@ -205,7 +204,37 @@ namespace Seq.App.GoogleChat.Tests
 
             var texts = Texts(Builder().BuildMessage(AlertEvent(results)));
 
-            Assert.Contains("<b>Results:</b><br>time: 2026-11-13 15:45:03 +06:00, count: 0", texts);
+            Assert.Contains("<b>Results:</b><br>count: 0", texts);
+        }
+
+        [Fact]
+        public void Keeps_the_time_column_when_rows_span_several_buckets()
+        {
+            var results = new object[]
+            {
+                new object[] { "time", "count" },
+                new object[] { "2026-11-13T09:45:00Z", 1L },
+                new object[] { "2026-11-13T09:46:00Z", 2L }
+            };
+
+            var texts = Texts(Builder().BuildMessage(AlertEvent(results)));
+
+            Assert.Contains("<b>Results:</b><br>time: 2026-11-13 15:45:00 +06:00, count: 1<br>time: 2026-11-13 15:46:00 +06:00, count: 2", texts);
+        }
+
+        [Fact]
+        public void Shows_dates_in_the_configured_time_zone()
+        {
+            var utcHost = new DefaultMessageBuilder(_host, new PropertyValueFormatter(null), false, [],
+                TimeZoneInfo.FindSystemTimeZoneById("Asia/Bishkek"));
+            var evt = Event();
+            evt.Data.LocalTimestamp = new DateTimeOffset(2026, 11, 17, 14, 13, 47, TimeSpan.Zero);
+
+            var eventCard = utcHost.BuildMessage(evt).CardsV2[0].Card;
+            var alertTexts = Texts(utcHost.BuildMessage(AlertEvent(TwoRows)));
+
+            Assert.Equal("Prod KG · 2026-11-17 20:13:47 +06:00", eventCard.Header.Subtitle);
+            Assert.Contains("<b>Period:</b> 2026-11-13 15:45:03 +06:00 – 2026-11-13 15:46:03 +06:00", alertTexts);
         }
 
         [Fact]
