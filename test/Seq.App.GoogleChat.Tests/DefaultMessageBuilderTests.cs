@@ -101,5 +101,100 @@ namespace Seq.App.GoogleChat.Tests
 
             Assert.Equal("(no message)", header);
         }
+
+        // The shape Seq 2025.1 sends to an app instance when an alert triggers (captured 2026-11-13).
+        private static Event<LogEventData> AlertEvent(object[] results, Dictionary<string, object> extra = null)
+        {
+            var properties = new Dictionary<string, object>
+            {
+                ["@seqid"] = "event-0092bb64416b08df0000000000000000",
+                ["NamespacedAlertTitle"] = "Errors by app",
+                ["Alert"] = new Dictionary<string, object>
+                {
+                    ["Id"] = "alert-23",
+                    ["Title"] = "Errors by app",
+                    ["Url"] = "https://seq.example.com/#/alerts/alert-23",
+                    ["Query"] = "select count(*) as count from stream where @Level = 'Error' group by time(1m), ApplicationName having count > 0 limit 100"
+                },
+                ["Source"] = new Dictionary<string, object>
+                {
+                    ["RangeStart"] = "2026-11-13T09:45:03.6822116Z",
+                    ["RangeEnd"] = "2026-11-13T09:46:03.6822116Z",
+                    ["ResultsUrl"] = "https://seq.example.com/#/events?q=select&from=2026-11-13T09:45:03Z",
+                    ["Results"] = results,
+                    ["ContributingEvents"] = null
+                },
+                ["SuppressedUntil"] = "2026-11-13T09:47:33.6822116Z",
+                ["Failures"] = null
+            };
+            foreach (var kv in extra ?? []) properties[kv.Key] = kv.Value;
+
+            return new("event-0092bb64", 1, DateTime.UtcNow, new LogEventData
+            {
+                Id = "event-0092bb64",
+                Level = LogEventLevel.Error,
+                RenderedMessage = "Alert condition triggered by Errors by app",
+                LocalTimestamp = new DateTimeOffset(2026, 11, 13, 15, 46, 3, TimeSpan.FromHours(6)),
+                Properties = properties
+            });
+        }
+
+        private static readonly object[] TwoRows =
+        [
+            new object[] { "time", "ApplicationName", "count" },
+            new object[] { "2026-11-13T09:45:03.6822116Z", "Voora.Ai.Portal.Api", 3L },
+            new object[] { "2026-11-13T09:45:03.6822116Z", "Identity.Api", 1L }
+        ];
+
+        [Fact]
+        public void Renders_an_alert_notification_with_links_period_and_results()
+        {
+            var message = Builder().BuildMessage(AlertEvent(TwoRows));
+            var card = message.CardsV2[0].Card;
+            var texts = Texts(message).ToList();
+
+            Assert.Equal("🔴 Errors by app", card.Header.Title);
+            Assert.Equal("Alert condition triggered by Errors by app", card.Sections[0].Header);
+            Assert.Contains("View the results", texts[0]);
+            Assert.Contains("https://seq.example.com/#/alerts/alert-23", texts[0]);
+            Assert.DoesNotContain(texts, t => t.Contains("View this event in Seq"));
+            Assert.Equal("<b>Period:</b> 2026-11-13 15:45:03 +06:00 – 2026-11-13 15:46:03 +06:00", texts[1]);
+            Assert.Equal("<b>Results:</b><br>time: 2026-11-13 15:45:03 +06:00, ApplicationName: Voora.Ai.Portal.Api, count: 3"
+                         + "<br>time: 2026-11-13 15:45:03 +06:00, ApplicationName: Identity.Api, count: 1", texts[2]);
+            Assert.DoesNotContain(texts, t => t.Contains("Alert:") || t.Contains("Source:") || t.Contains("@seqid"));
+        }
+
+        [Fact]
+        public void Keeps_alert_core_visible_and_collapses_attached_properties()
+        {
+            var section = Builder().BuildMessage(AlertEvent(TwoRows, new() { ["Environment"] = "Prod KG" })).CardsV2[0].Card.Sections[0];
+
+            Assert.Contains(section.Widgets, w => w.TextParagraph.Text == "<b>Environment:</b> Prod KG");
+            Assert.True(section.Collapsible);
+            Assert.Equal(3, section.UncollapsibleWidgetsCount);
+        }
+
+        [Fact]
+        public void Shows_a_zero_count_for_a_no_logs_alert()
+        {
+            var results = new object[] { new object[] { "time", "count" }, new object[] { "2026-11-13T09:45:03Z", 0L } };
+
+            var texts = Texts(Builder().BuildMessage(AlertEvent(results)));
+
+            Assert.Contains("<b>Results:</b><br>time: 2026-11-13 15:45:03 +06:00, count: 0", texts);
+        }
+
+        [Fact]
+        public void Caps_the_number_of_result_rows()
+        {
+            var rows = new List<object> { new object[] { "ApplicationName", "count" } };
+            rows.AddRange(Enumerable.Range(0, 30).Select(i => (object)new object[] { $"app{i}", 1L }));
+
+            var results = Texts(Builder().BuildMessage(AlertEvent(rows.ToArray()))).Single(t => t.StartsWith("<b>Results:"));
+
+            Assert.Contains("app19", results);
+            Assert.DoesNotContain("app20", results);
+            Assert.EndsWith("… 10 more row(s)", results);
+        }
     }
 }

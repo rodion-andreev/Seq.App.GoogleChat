@@ -10,6 +10,12 @@ An app for [Seq](https://datalust.co/seq) that posts events and alert notificati
 4. **Choose what it receives.** Either a signal stream (_Stream incoming events_ with a signal such as _Errors_), or, preferably, use the instance as an **alert notification channel**: Seq alerts aggregate, so a burst of errors becomes one message.
 5. **Set Seq's canonical URI** (`api.canonicalUri`; `SEQ_API_CANONICALURI` for the Docker image) to the address people open Seq at, otherwise "View this event in Seq" links point to `localhost`.
 
+## Alert notifications
+
+When the instance is an alert's notification channel, the card shows the alert title, links to the results and to the alert, the period, and up to 20 result rows (for example `ApplicationName: Voora.Ai.Portal.Api, count: 3`). The alert's internals (`Alert`, `Source`) are not dumped as JSON. Properties added under the alert's _Attached properties_ appear below, collapsed. Their values are plain text: write `Prod`, not `'Prod'`.
+
+An alert with `having count = 0` does fire when the window holds no events (Seq produces a row with `count: 0`), so "no logs from service X" alerts work.
+
 ## Settings
 
 | Setting | Default | Notes |
