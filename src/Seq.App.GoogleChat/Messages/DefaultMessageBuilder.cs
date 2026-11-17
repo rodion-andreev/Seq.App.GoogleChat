@@ -19,6 +19,7 @@ namespace Seq.App.GoogleChat.Messages
         internal const int MaxHeaderChars = 1_000;
         internal const int MaxWidgetChars = 4_000;
         internal const int MaxResultRows = 20;
+        internal const int MaxExpandedExtras = 3;
 
         private const string StackTraceProperty = "StackTrace";
         private const string TimeFormat = "yyyy-MM-dd HH:mm:ss zzz";
@@ -92,7 +93,7 @@ namespace Seq.App.GoogleChat.Messages
             var properties = evt.Data.Properties ?? new Dictionary<string, object>();
 
             foreach (var key in SpecialProperties)
-                if (properties.TryGetValue(key, out var value))
+                if (IsIncluded(key) && properties.TryGetValue(key, out var value))
                     yield return PropertyWidget(key, value);
 
             if (!string.IsNullOrEmpty(evt.Data.Exception))
@@ -157,7 +158,8 @@ namespace Seq.App.GoogleChat.Messages
 
         private GoogleChatMessage Message(string title, DateTimeOffset timestamp, Section section, int visibleWidgets)
         {
-            if (section.Widgets.Count > visibleWidgets)
+            // A few extra lines read better in full than behind "Show more"; collapse only a longer list.
+            if (section.Widgets.Count - visibleWidgets > MaxExpandedExtras)
             {
                 section.Collapsible = true;
                 section.UncollapsibleWidgetsCount = visibleWidgets;

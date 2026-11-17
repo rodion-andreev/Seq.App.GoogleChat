@@ -48,12 +48,36 @@ namespace Seq.App.GoogleChat.Tests
         }
 
         [Fact]
-        public void Collapses_attachments_behind_the_link()
+        public void Shows_a_few_attachments_in_full()
         {
             var section = Builder().BuildMessage(Event()).CardsV2[0].Card.Sections[0];
 
+            Assert.Equal(3, section.Widgets.Count);
+            Assert.Null(section.Collapsible);
+        }
+
+        [Fact]
+        public void Collapses_a_long_attachment_list_behind_the_link()
+        {
+            var properties = Enumerable.Range(0, 5).ToDictionary(i => $"P{i}", i => (object)i);
+
+            var section = Builder().BuildMessage(Event(properties: properties)).CardsV2[0].Card.Sections[0];
+
             Assert.True(section.Collapsible);
             Assert.Equal(1, section.UncollapsibleWidgetsCount);
+        }
+
+        [Fact]
+        public void Shows_only_the_included_key_fields()
+        {
+            var properties = new Dictionary<string, object>
+            {
+                ["Id"] = "x", ["Host"] = "h", ["ApplicationName"] = "Portal.Api", ["RequestPath"] = "/health", ["ConnectionId"] = "c"
+            };
+
+            var texts = Texts(Builder(false, "ApplicationName", "RequestPath").BuildMessage(Event(properties: properties))).Skip(1).ToList();
+
+            Assert.Equal(["<b>ApplicationName:</b> Portal.Api", "<b>RequestPath:</b> /health"], texts);
         }
 
         [Fact]
@@ -167,7 +191,7 @@ namespace Seq.App.GoogleChat.Tests
         [Fact]
         public void Keeps_alert_core_visible_and_collapses_attached_properties()
         {
-            var section = Builder().BuildMessage(AlertEvent(TwoRows, new() { ["Environment"] = "Prod KG" })).CardsV2[0].Card.Sections[0];
+            var section = Builder().BuildMessage(AlertEvent(TwoRows, new() { ["Environment"] = "Prod KG", ["A"] = "1", ["B"] = "2", ["C"] = "3" })).CardsV2[0].Card.Sections[0];
 
             Assert.Contains(section.Widgets, w => w.TextParagraph.Text == "<b>Environment:</b> Prod KG");
             Assert.True(section.Collapsible);
