@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file. See [standard-version](https://github.com/conventional-changelog/standard-version) for commit guidelines.
 
+## [1.3.0](https://github.com/rodion-andreev/Seq.App.GoogleChat/compare/v1.2.0...v1.3.0) (2026-11-17)
+
+
+### Features
+
+* render Seq alert notifications as alert cards ([66b9f3b](https://github.com/rodion-andreev/Seq.App.GoogleChat/commit/66b9f3bdc9b8b79047a3325796eda9036f754a2b))
+
 ## [1.2.0](https://github.com/rodion-andreev/Seq.App.GoogleChat/compare/v1.0.2...v1.2.0) (2026-11-12)
 
 
